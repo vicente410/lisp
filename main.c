@@ -47,6 +47,19 @@ Obj *read(FILE *f);
 Obj *eval(Obj *env, Obj *obj);
 void print_obj(Obj *obj);
 
+char *get_kind_string(ObjKind kind) {
+    switch (kind) {
+    case NIL: return "nil";
+    case CONS: return "cons";
+    case SYM: return "sym";
+    case PRIM: return "prim";
+    case CLOS: return "clos";
+    case MACRO: return "macro";
+    case NUM: return "num";
+    default: assert(0 && "Error: Invalid kind");
+    }
+}
+
 void init_heap() {
     for (size_t i = 1; i < HEAP_SIZE; i++) {
         heap[i].mark = false;
@@ -109,7 +122,10 @@ Obj* alloc_obj() {
 }
 
 Obj *head(Obj *obj) {
-    assert(obj->kind == CONS);
+    if (obj->kind != CONS) {
+        fprintf(stderr, "Error: can't get head of %s", get_kind_string(obj->kind));
+        exit(1);
+    }
     return obj->as.cons.head;
 }
 
@@ -216,27 +232,13 @@ void print_list(Obj* obj) {
 
 void print_obj(Obj* obj) {
     switch (obj->kind) {
-    case NIL:
-        printf("()");
-        break;
-    case CONS:
-        print_list(obj);
-        break;
-    case SYM:
-        printf("%s", obj->as.sym);
-        break;
-    case PRIM:
-        printf("<primitive>");
-        break;
-    case CLOS:
-        printf("<closure>");
-        break;
-    case MACRO:
-        printf("<macro>");
-        break;
-    case NUM:
-        printf("%g", obj->as.num);
-        break;
+    case NIL:   printf("()");              break;
+    case CONS:  print_list(obj);           break;
+    case SYM:   printf("%s", obj->as.sym); break;
+    case PRIM:  printf("<primitive>");     break;
+    case CLOS:  printf("<closure>");       break;
+    case MACRO: printf("<macro>");         break;
+    case NUM:   printf("%g", obj->as.num); break;
     }
 }
 
@@ -327,7 +329,10 @@ Obj *f_mod(Obj *env, Obj *args) {
 Obj *f_eq(Obj *env, Obj *args) {
     Obj *x = eval(env, head(args));
     Obj *y = eval(env, head(tail(args)));
-    return x->as.num == y->as.num ? new_num(1) : nil;
+
+    if (x->kind == NUM) return x->as.num == y->as.num ? new_num(1) : nil;
+    else if (x->kind == SYM) return strcmp(x->as.sym, y->as.sym) == 0 ? new_num(1) : nil;
+    else return nil;
 }
 
 Obj *f_less(Obj *env, Obj *args) {
@@ -364,13 +369,9 @@ Obj *f_env(Obj *env, Obj *args) {
     return env;
 }
 
-Obj *f_cond(Obj *env, Obj *args) {
-    Obj *obj = nil;
-    while (obj == nil) {
-        obj = eval(env, head(args));
-        args = tail(args);
-    }
-    return obj;
+Obj *f_consp(Obj *env, Obj *args) {
+    Obj *x = eval(env, head(args));
+    return x->kind == CONS ? new_num(1) : nil;
 }
 
 Obj *f_eval(Obj *env, Obj *args) {
@@ -439,6 +440,12 @@ Obj *read(FILE *f) {
     } else if (fpeekc(f) == '\'') {
         fgetc(f);
         return new_cons(new_sym("quote"), new_cons(read(f), nil));
+    } else if (fpeekc(f) == '`') {
+        fgetc(f);
+        return new_cons(new_sym("quasiquote"), new_cons(read(f), nil));
+    } else if (fpeekc(f) == ',') {
+        fgetc(f);
+        return new_cons(new_sym("unquote"), new_cons(read(f), nil));
     } else {
         return read_atom(f);
     }
@@ -513,7 +520,7 @@ int main(int argc, char **argv) {
     def_prim("lazy-if", f_lazy_if);
     def_prim("quote", f_quote);
     def_prim("env", f_env);
-    def_prim("cond", f_cond);
+    def_prim("cons?", f_consp);
     def_prim("eval", f_eval);
     def_prim("print", f_print);
 
@@ -521,8 +528,8 @@ int main(int argc, char **argv) {
     Obj *obj;
     while ((obj = read(f)) != NULL) {
         //print_obj(eval(base_env, obj));
-        eval(base_env, obj);
         //printf("\n");
+        eval(base_env, obj);
         //dump_heap();
         garbage_collect();
     }

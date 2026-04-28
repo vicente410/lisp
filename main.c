@@ -409,7 +409,7 @@ Obj *read_atom(FILE *f) {
     size_t i = 0;
     float num;
 
-    while (!isspace(fpeekc(f)) && fpeekc(f) != '(' && fpeekc(f) != ')') {
+    while (!isspace(fpeekc(f)) && fpeekc(f) != '(' && fpeekc(f) != ')' && fpeekc(f) != ';') {
         buffer[i++] = fgetc(f);
     }
     buffer[i] = '\0';
@@ -421,14 +421,17 @@ Obj *read_atom(FILE *f) {
     }
 }
 
-Obj *read(FILE *f) {
-    while (!feof(f) && isspace(fpeekc(f))) {
-        fgetc(f);
+bool next_token(FILE *f) {
+    while (!feof(f) && (isspace(fpeekc(f)) || fpeekc(f) == ';')) {
+        if (fpeekc(f) == ';') while (!feof(f) && fgetc(f) != '\n');
+        else fgetc(f);
     }
 
-    if (feof(f)) {
-        return NULL;
-    }
+    return !feof(f);
+}
+
+Obj *read(FILE *f) {
+    if (!next_token(f)) return NULL;
 
     if (fpeekc(f) == '(') {
         fgetc(f);

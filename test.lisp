@@ -53,3 +53,5 @@
 (let x 5 (print (alist-get 'pi (env))))
 
 (print `(pi ,(+ 1 2)))
+
+(print @a)

@@ -22,6 +22,7 @@ typedef enum {
     CLOS,
     MACRO,
     NUM,
+    CHAR,
 } ObjKind;
 
 struct Obj {
@@ -32,6 +33,7 @@ struct Obj {
         char* sym;
         Obj* (*prim)(Obj* env, Obj* args);
         float num;
+        char ch;
     } as;
     ObjKind kind;
     bool mark;
@@ -214,6 +216,15 @@ Obj* new_num(float num) {
     return obj;
 }
 
+Obj* new_char(char ch) {
+    Obj *obj = alloc_obj();
+
+    obj->kind = CHAR;
+    obj->as.ch = ch;
+
+    return obj;
+}
+
 void print_list(Obj* obj) {
     printf("(");
     print_obj(obj->as.cons.head);
@@ -239,6 +250,7 @@ void print_obj(Obj* obj) {
     case CLOS:  printf("<closure>");       break;
     case MACRO: printf("<macro>");         break;
     case NUM:   printf("%g", obj->as.num); break;
+    case CHAR:  printf("%c", obj->as.ch);  break;
     }
 }
 
@@ -330,15 +342,16 @@ Obj *f_eq(Obj *env, Obj *args) {
     Obj *x = eval(env, head(args));
     Obj *y = eval(env, head(tail(args)));
 
-    if (x->kind == NUM) return x->as.num == y->as.num ? new_num(1) : nil;
-    else if (x->kind == SYM) return strcmp(x->as.sym, y->as.sym) == 0 ? new_num(1) : nil;
+    if (x->kind == NUM) return x->as.num == y->as.num ? new_sym("t") : nil;
+    else if (x->kind == SYM) return strcmp(x->as.sym, y->as.sym) == 0 ? new_sym("t") : nil;
+    else if (x->kind == CHAR) return x->as.ch == y->as.ch ? new_sym("t") : nil;
     else return nil;
 }
 
 Obj *f_less(Obj *env, Obj *args) {
     Obj *x = eval(env, head(args));
     Obj *y = eval(env, head(tail(args)));
-    return x->as.num < y->as.num ? new_num(1) : nil;
+    return x->as.num < y->as.num ? new_sym("t") : nil;
 }
 
 Obj *f_fn(Obj *env, Obj *args) {
@@ -371,7 +384,7 @@ Obj *f_env(Obj *env, Obj *args) {
 
 Obj *f_consp(Obj *env, Obj *args) {
     Obj *x = eval(env, head(args));
-    return x->kind == CONS ? new_num(1) : nil;
+    return x->kind == CONS ? new_sym("t") : nil;
 }
 
 Obj *f_eval(Obj *env, Obj *args) {
@@ -446,6 +459,9 @@ Obj *read(FILE *f) {
     } else if (fpeekc(f) == ',') {
         fgetc(f);
         return new_cons(new_sym("unquote"), new_cons(read(f), nil));
+    } else if (fpeekc(f) == '@') {
+        fgetc(f);
+        return new_char(fgetc(f));
     } else {
         return read_atom(f);
     }
@@ -499,6 +515,7 @@ Obj *eval(Obj *env, Obj *obj) {
 
 int main(int argc, char **argv) {
     if (argc != 2) {
+        fprintf(stderr, "Usage: %s [filename]", argv[0]);
         return 1;
     }
 
@@ -527,13 +544,9 @@ int main(int argc, char **argv) {
     FILE *f = fopen(argv[1], "r");
     Obj *obj;
     while ((obj = read(f)) != NULL) {
-        //print_obj(eval(base_env, obj));
-        //printf("\n");
         eval(base_env, obj);
-        //dump_heap();
         garbage_collect();
     }
 
-    //dump_heap();
     return 0;
 }

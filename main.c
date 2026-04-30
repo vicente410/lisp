@@ -44,6 +44,7 @@ Obj heap[HEAP_SIZE];
 Obj *next_free = NULL;
 Obj *nil = &heap[0];
 Obj *base_env = &heap[0];
+Obj *read_macros = &heap[0];
 
 Obj *read(FILE *f);
 Obj *eval(Obj *env, Obj *obj);
@@ -90,6 +91,7 @@ void garbage_collect() {
     Obj *prev_free = NULL;
 
     mark(base_env);
+    mark(read_macros);
 
     for (size_t i = 1; i < HEAP_SIZE; i++) {
         if (heap[i].mark) {
@@ -105,61 +107,12 @@ void garbage_collect() {
     prev_free->as.cons.head = NULL;
 }
 
-void dump_heap() {
-    for (size_t i = 0; i < 1000; i++) {
-        printf("[%ld] ", i);
-        //if (&heap[i].free) printf("free");
-        /*else*/ print_obj(&heap[i]);
-        printf("\n");
-    }
-}
-
 Obj* alloc_obj() {
-    if (!next_free) dump_heap();
     assert(next_free && "Out of memory");
     Obj *ret = next_free;
     ret->free = false;
     next_free = next_free->as.cons.head;
     return ret;
-}
-
-Obj *head(Obj *obj) {
-    if (obj->kind != CONS) {
-        fprintf(stderr, "Error: can't get head of %s", get_kind_string(obj->kind));
-        exit(1);
-    }
-    return obj->as.cons.head;
-}
-
-Obj *tail(Obj *obj) {
-    if (obj->kind != CONS) dump_heap();
-    assert(obj->kind == CONS);
-    return obj->as.cons.tail;
-}
-
-Obj *clos_args(Obj *obj) {
-    assert(obj->kind == CLOS);
-    return obj->as.clos.head;
-}
-
-Obj *clos_body(Obj *obj) {
-    assert(obj->kind == CLOS);
-    return obj->as.clos.tail->as.cons.head;
-}
-
-Obj *clos_env(Obj *obj) {
-    assert(obj->kind == CLOS);
-    return obj->as.clos.tail->as.cons.tail;
-}
-
-Obj *macro_args(Obj *obj) {
-    assert(obj->kind == MACRO);
-    return obj->as.cons.head;
-}
-
-Obj *macro_body(Obj *obj) {
-    assert(obj->kind == MACRO);
-    return obj->as.cons.tail;
 }
 
 Obj* new_cons(Obj *head, Obj *tail) {
@@ -225,19 +178,64 @@ Obj* new_char(char ch) {
     return obj;
 }
 
+Obj *head(Obj *obj) {
+    if (obj->kind != CONS) {
+        fprintf(stderr, "Error: can't get head of %s", get_kind_string(obj->kind));
+        exit(1);
+    }
+    return obj->as.cons.head;
+}
+
+Obj *tail(Obj *obj) {
+    if (obj->kind != CONS) {
+        fprintf(stderr, "Error: can't get tail of %s", get_kind_string(obj->kind));
+        exit(1);
+    }
+    return obj->as.cons.tail;
+}
+
+Obj *clos_args(Obj *obj) {
+    assert(obj->kind == CLOS);
+    return obj->as.clos.head;
+}
+
+Obj *clos_body(Obj *obj) {
+    assert(obj->kind == CLOS);
+    return obj->as.clos.tail->as.cons.head;
+}
+
+Obj *clos_env(Obj *obj) {
+    assert(obj->kind == CLOS);
+    return obj->as.clos.tail->as.cons.tail;
+}
+
+Obj *macro_args(Obj *obj) {
+    assert(obj->kind == MACRO);
+    return obj->as.cons.head;
+}
+
+Obj *macro_body(Obj *obj) {
+    assert(obj->kind == MACRO);
+    return obj->as.cons.tail;
+}
+
 void print_list(Obj* obj) {
     printf("(");
+
     print_obj(obj->as.cons.head);
     obj = obj->as.cons.tail;
+
     while (obj->kind == CONS) {
         printf(" ");
         print_obj(obj->as.cons.head);
         obj = obj->as.cons.tail;
     }
+
     if (obj->kind != NIL) {
         printf(" . ");
         print_obj(obj);
     }
+
     printf(")");
 }
 
@@ -252,6 +250,20 @@ void print_obj(Obj* obj) {
     case NUM:   printf("%g", obj->as.num); break;
     case CHAR:  printf("%c", obj->as.ch);  break;
     }
+}
+
+Obj* get_read_macro(char ch) {
+    Obj *alist = read_macros;
+
+    while (alist->kind == CONS) {
+        if (alist->as.cons.head->as.cons.head->as.ch == ch) {
+            return alist->as.cons.head->as.cons.tail;
+        } else {
+            alist = alist->as.cons.tail;
+        }
+    }
+
+    return nil;
 }
 
 Obj* get_env(Obj* env, char *sym) {
@@ -280,11 +292,7 @@ void def_prim(char *sym, Obj *(prim)(Obj *env, Obj *args)) {
 }
 
 Obj *append(Obj *l1, Obj *l2) {
-    if (l1->kind == CONS) {
-        return new_cons(head(l1), append(tail(l1), l2));
-    } else {
-        return l2;
-    }
+    return l1->kind == CONS ? new_cons(head(l1), append(tail(l1), l2)) : l2;
 }
 
 Obj *f_def(Obj *env, Obj *args) {
@@ -402,6 +410,13 @@ Obj *f_print(Obj *env, Obj *args) {
     return nil;
 }
 
+Obj *f_read_macro(Obj *env, Obj *args) {
+    Obj *x = eval(env, head(args));
+    Obj *y = eval(env, head(tail(args)));
+    read_macros = acons(x, y, read_macros);
+    return nil;
+}
+
 char fpeekc(FILE *f) {
     char c = fgetc(f);
     ungetc(c, f);
@@ -423,6 +438,11 @@ Obj *read_atom(FILE *f) {
     size_t i = 0;
     float num;
 
+    if (fpeekc(f) == '@') {
+        fgetc(f);
+        return new_char(fgetc(f));
+    }
+    
     while (!isspace(fpeekc(f)) && fpeekc(f) != '(' && fpeekc(f) != ')' && fpeekc(f) != ';') {
         buffer[i++] = fgetc(f);
     }
@@ -445,23 +465,15 @@ bool next_token(FILE *f) {
 }
 
 Obj *read(FILE *f) {
+    Obj *read_macro_sym;
     if (!next_token(f)) return NULL;
 
     if (fpeekc(f) == '(') {
         fgetc(f);
         return read_list(f);
-    } else if (fpeekc(f) == '\'') {
+    } else if ((read_macro_sym = get_read_macro(fpeekc(f))) != nil) {
         fgetc(f);
-        return new_cons(new_sym("quote"), new_cons(read(f), nil));
-    } else if (fpeekc(f) == '`') {
-        fgetc(f);
-        return new_cons(new_sym("quasiquote"), new_cons(read(f), nil));
-    } else if (fpeekc(f) == ',') {
-        fgetc(f);
-        return new_cons(new_sym("unquote"), new_cons(read(f), nil));
-    } else if (fpeekc(f) == '@') {
-        fgetc(f);
-        return new_char(fgetc(f));
+        return new_cons(read_macro_sym, new_cons(read(f), nil));
     } else {
         return read_atom(f);
     }
@@ -471,46 +483,39 @@ Obj *bind(Obj *syms, Obj *vals, Obj *env) {
     if (syms->kind == CONS) {
         if (strcmp(head(syms)->as.sym, ".") == 0) {
             return acons(head(tail(syms)), vals, env);
-        } else {
-            return acons(head(syms), head(vals), bind(tail(syms), tail(vals), env));
         }
-    } else {
-        return env;
+
+        return acons(head(syms), head(vals), bind(tail(syms), tail(vals), env));
     }
+
+    return env;
 }
 
 Obj *eval_list(Obj *env, Obj *list) {
-    if (list->kind == CONS) {
-        return new_cons(eval(env, head(list)), eval_list(env, tail(list)));
-    } else {
-        return nil;
-    }
+    if (list->kind == CONS) return new_cons(eval(env, head(list)), eval_list(env, tail(list)));
+    return nil;
+}
+
+Obj *reduce(Obj *env, Obj *f, Obj *args) {
+    return eval(bind(clos_args(f), eval_list(env, args), append(clos_env(f), base_env)), clos_body(f));
+}
+
+Obj *expand(Obj *env, Obj *f, Obj *args) {
+    return eval(env, eval(bind(macro_args(f), args, env), macro_body(f)));
 }
 
 Obj *apply(Obj *env, Obj *f, Obj *args) {
-    if (f->kind == PRIM) {
-        return f->as.prim(env, args);
-    } else if (f->kind == CLOS) {
-        return eval(bind(clos_args(f), eval_list(env, args), append(clos_env(f), base_env)), clos_body(f));
-    } else if (f->kind == MACRO) {
-        return eval(env, eval(bind(macro_args(f), args, env), macro_body(f)));
-    }
+    if (f->kind == PRIM) return f->as.prim(env, args);
+    if (f->kind == CLOS) return reduce(env, f, args);
+    if (f->kind == MACRO) return expand(env, f, args);
     assert(false && "Can't eval");
 }
 
 Obj *eval(Obj *env, Obj *obj) {
     assert(obj);
-    switch (obj->kind) {
-    case CONS:
-        return apply(env, eval(env, head(obj)), tail(obj));
-        break;
-    case SYM:
-        return get_env(env, obj->as.sym);
-        break;
-    default:
-        return obj;
-        break;
-    }
+    if (obj->kind == CONS) return apply(env, eval(env, head(obj)), tail(obj));
+    if (obj->kind == SYM) return get_env(env, obj->as.sym);
+    return obj;
 }
 
 int main(int argc, char **argv) {
@@ -540,6 +545,7 @@ int main(int argc, char **argv) {
     def_prim("cons?", f_consp);
     def_prim("eval", f_eval);
     def_prim("print", f_print);
+    def_prim("read-macro", f_read_macro);
 
     FILE *f = fopen(argv[1], "r");
     Obj *obj;
